@@ -1,0 +1,46 @@
+{
+  "_readme": [
+    "环境档案模板：复制成本技能目录下的 profile.json 再改，或用 `python scripts/nbkit.py init/set` 写入。",
+    "本文件是仓库里唯一允许出现路径样子的地方，全部为占位值，不含任何真实个人信息。",
+    "字段缺了不会瞎猜：`python scripts/nbkit.py check` 会打印标准题面让 agent 来问。",
+    "LMS 账号密码明文存在这里（本机使用），不要把 profile.json 发给别人。"
+  ],
+  "student": {
+    "id": "REPLACE-WITH-YOUR-ID",
+    "name": "REPLACE-WITH-YOUR-NAME",
+    "name_pinyin": "可选：姓名全拼，备注类要求（如变量名加全拼）用到时再问"
+  },
+  "deliver_pattern": "{id}-{name}-{exp}",
+  "default_course": "REPLACE-COURSE-KEY",
+  "courses": {
+    "REPLACE-COURSE-KEY": {
+      "label": "课程名字（封面课程名称、条目显示名），如\"大数据实验\"",
+      "note": "可选：本条目级备注，如\"变量名统一加姓名全拼\"",
+      "output_dir": "~/work/REPLACE-COURSE-KEY",
+      "python": "python3",
+      "kernel": "python3",
+      "display_name": "Python 3",
+      "lms": {
+        "base": "REPLACE-LMS-BASE",
+        "username": "REPLACE-LMS-USERNAME",
+        "password": "REPLACE-LMS-PASSWORD"
+      },
+      "cover": {
+        "course_name": "可选：封面课程名称，缺省用 label"
+      }
+    }
+  },
+  "tools": {
+    "print_pdf": {
+      "engine": "chrome-headless",
+      "path": "REPLACE-OR-LEAVE-OUT-FOR-AUTODETECT",
+      "watermark": {
+        "mode": "ask | always | never（每次询问 / 一直添加 / 一直不添加；初始化问一次落盘）",
+        "text": "可选：自定义水印文字，留空默认\"学号 姓名\""
+      }
+    }
+  },
+  "pitfalls": [
+    "Optional free-form reminders for this machine, e.g. 'the lecture PDFs are image-only, no text layer'."
+  ]
+}

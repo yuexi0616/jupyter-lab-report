@@ -1,0 +1,50 @@
+# 个人环境档案绝不进仓库（含 LMS 凭据）
+profile.json
+profile.local.json
+profile.*.local.json
+
+# 个人成果 / 课件缓存 / 散落测试数据（含学号姓名，勿上传）
+output/
+data.txt
+
+# 密钥 / 凭据
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+secrets.*
+credentials*.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# Node
+node_modules/
+
+# 日志
+*.log
+logs/
+
+# 构建中间件与交付物
+*.html
+draft.ipynb
+*.pdf
+cells.json
+examples/out/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
