@@ -1,0 +1,62 @@
+{
+  "_readme": "摸鱼 Agent 工作台占位档案 —— 凭据字段只存引用 ID / 环境变量名，禁止明文。",
+  "common": {
+    "machine": {
+      "os": "REPLACE-OS",
+      "python": "REPLACE-PYTHON",
+      "workdir": "REPLACE-WORKDIR"
+    },
+    "identity": {
+      "id": "REPLACE-ID",
+      "name": "REPLACE-NAME"
+    },
+    "credentials": {
+      "llm_key": {
+        "ref": "REF-LLM-KEY",
+        "env": "MOYU_LLM_API_KEY",
+        "encrypted": true
+      },
+      "jev_key": {
+        "ref": "REF-JEV-KEY",
+        "env": "MOYU_JEV_API_KEY",
+        "encrypted": true
+      }
+    }
+  },
+  "course.*": {
+    "platforms": [
+      "REPLACE-PLATFORM"
+    ],
+    "courses": [],
+    "playback": {
+      "rate": 1.8,
+      "mute": true,
+      "background": true
+    },
+    "takeover": {
+      "onCaptcha": "pause_and_notify"
+    }
+  },
+  "messaging.*": {
+    "accounts": [],
+    "persona": {
+      "style": "REPLACE-STYLE"
+    },
+    "rules": {
+      "freq_limit": "REPLACE-LIMIT"
+    },
+    "send_policy": "draft_only"
+  },
+  "project.*": {
+    "topic": "REPLACE-TOPIC",
+    "sources": [],
+    "toolchain": {
+      "engine": "xelatex",
+      "compiler": "REPLACE-COMPILER"
+    },
+    "integrity": {
+      "digit_trace": true,
+      "citation_verify": true
+    }
+  }
+}

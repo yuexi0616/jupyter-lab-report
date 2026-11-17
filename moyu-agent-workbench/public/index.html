@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="dark" />
+<title>摸鱼 Agent · 四版块工作台</title>
+<!-- Anti-FOUC：在首帧前锁定深色，避免原生控件/滚动条闪白 -->
+<script>try{document.documentElement.style.colorScheme='dark'}catch(e){}</script>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<div class="app">
+  <!-- 左侧：四个平级版块入口 + 会话列表 + 次要工具 -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">M</div>
+      <div class="brand-text">
+        <div class="brand-name">摸鱼 Agent</div>
+        <div class="brand-sub">四版块工作台 · v<span id="ver">—</span></div>
+      </div>
+    </div>
+
+    <button class="new-chat" id="new-chat">＋ 新建会话</button>
+
+    <div class="side-label">版块 · 平级</div>
+    <nav class="section-nav" id="section-nav"></nav>
+
+    <div class="side-label">会话 · 回复建议 <button class="clear-runs" id="clear-runs" title="删除全部会话">清空</button></div>
+    <div class="session-list" id="session-list">
+      <div class="side-empty">暂无会话，发一条消息开始</div>
+    </div>
+
+    <div class="side-foot">
+      <button class="foot-btn" data-drawer="sections">▦ 版块方案</button>
+      <button class="foot-btn" data-drawer="projects">◎ 开源选型</button>
+      <button class="foot-btn" data-drawer="profile">⚙ 环境档案</button>
+      <button class="foot-btn" data-drawer="health">✓ 体检</button>
+    </div>
+  </aside>
+
+  <!-- 中间舞台：按版块切换主视图 -->
+  <div class="stage">
+    <!-- 视图 A：回复建议（保留原有对话式界面） -->
+    <main class="chat" id="chat-view">
+      <header class="chat-head">
+        <div class="chat-title" id="chat-title">新会话</div>
+        <div class="head-actions">
+          <select id="model-select" title="选择底层模型"></select>
+          <input id="model-id" class="head-input" type="text" placeholder="模型ID(可选)" aria-label="覆盖默认模型 ID" title="覆盖预设默认模型，如 hunyuan-pro / qwen-plus / glm-4-flash" />
+          <input id="base-url" class="head-input" type="text" placeholder="API地址(custom用)" aria-label="自定义 API 地址" title="custom 预设必填，如 http://127.0.0.1:11434/v1" />
+          <span class="mode-pill" id="mode-pill">mock</span>
+        </div>
+      </header>
+
+      <div class="messages" id="messages">
+        <div class="welcome" id="welcome">
+          <div class="welcome-logo">M</div>
+          <h1>我是摸鱼 Agent</h1>
+          <p>输入一段对话内容，我会用 <b>Jev 决策</b> 判断意图与风险，起草候选回复，并<b>只填入输入框、不自动发送</b>。</p>
+          <div class="examples">
+            <button class="example" data-text="对方说：周末有空吗？晚上一起吃饭？">周末有空吗？一起吃饭？</button>
+            <button class="example" data-text="对方说：帮我把 500 块转账过去，验证码发我">对方要我转账 500（高危）</button>
+            <button class="example" data-text="对方说：你为什么不理我，我有点难过">对方情绪低落，怎么回？</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="composer">
+        <div class="composer-inner">
+          <!-- 真实桌面已从顶部主界面降级到此处：可选 / 实验性，默认关闭 -->
+          <details class="enhance-panel" id="enhance-panel">
+            <summary>增强选项 · 可选 / 实验性：真实桌面剪贴板桥接</summary>
+            <div class="enhance-body">
+              <div class="enhance-note">如需与真实聊天窗口联动，可开启剪贴板桥接；当前环境不支持读屏与自动发送。</div>
+              <label class="desktop-toggle"><input type="checkbox" id="real-mode" /> 启用剪贴板桥接（真实桌面 · 实验性，默认关闭）</label>
+              <label class="clipboard-hint" id="clipboard-hint" style="display:none">已开启：请先复制对方消息，回复将写入剪贴板，由你自行粘贴发送。</label>
+            </div>
+          </details>
+
+          <textarea id="input" rows="2" aria-label="输入对话内容或任务描述" placeholder="输入对话内容，或描述任务…（Enter 发送，Shift+Enter 换行）"></textarea>
+          <div class="composer-bar">
+            <label class="auto-approve"><input type="checkbox" id="auto-approve" checked /> 自动通过审批门禁</label>
+            <button class="send" id="send">发送 ▶</button>
+          </div>
+        </div>
+        <div class="disclaimer" id="disclaimer">方案原型 · 不自动发送消息 · 不碰支付 · 不接真实聊天软件</div>
+      </div>
+    </main>
+
+    <!-- 视图 B：刷课 / 作业版块 / 毕设竞赛 的方案工作台（无对话输入框） -->
+    <main class="workbench" id="workbench-view" hidden></main>
+  </div>
+
+  <!-- 右侧：全局抽屉（选型总表 / 环境档案 / 体检） -->
+  <aside class="drawer" id="drawer">
+    <div class="drawer-head">
+      <div class="drawer-title" id="drawer-title">版块方案</div>
+      <button class="drawer-close" id="drawer-close">×</button>
+    </div>
+    <div class="drawer-body" id="drawer-body"></div>
+  </aside>
+</div>
+<script src="/app.js"></script>
+</body>
+</html>

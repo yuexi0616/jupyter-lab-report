@@ -1,0 +1,11 @@
+# 本目录是「摸鱼 Agent 工作台」原型，与母版 notebook 工作流不同：
+# 母版 .gitignore 的 profile.json / *.html 规则是为 notebook 产物设计的，
+# 这里的手写前端页面与占位档案属于源码，需要纳入版本控制。
+!data/profile.json
+!public/index.html
+
+# 运行轨迹 / 临时状态 / 调试产物不入库
+runs/
+.tmp-runs-*/
+*.png
+*.log

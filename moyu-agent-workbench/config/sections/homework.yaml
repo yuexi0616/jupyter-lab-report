@@ -1,0 +1,21 @@
+# 作业版块声明式流程（P2 · 设计文档 v2 §10）
+# 母版：jupyter-lab-report（内部模板），本 harness 不 vendored 模板源码。
+id: homework
+name: 作业版块
+pipeline: jupyter-lab-report
+steps_order: [doctor, check, cover, build, run, audit, deliver, clean, pack]
+gates:
+  before_generate:
+    applies_to: [build]           # notebook 骨架生成属生成类动作
+    hook: askBeforeGenerate
+  after_generate:
+    applies_to: [deliver]         # 报告交付需"采用"确认
+    hook: askAfterGenerate
+sanitization:
+  reject_placeholders: true       # REPLACE-* 占位
+  reject_pii_fields: [name, author, student_id, workdir, email]
+traceability:
+  rule: "每条结论必须有对应 notebook 单元输出 id"
+  verdicts: [PASS, FAIL, INCONCLUSIVE]
+boundary: "不代写、不伪造数据；AI 生成边界按课程规则标注"
+backend: mock                     # mock | bridge（bridge 对接真实 jupyter 执行器）

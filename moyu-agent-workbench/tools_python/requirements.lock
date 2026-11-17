@@ -1,0 +1,7 @@
+# AnyJev 本地决策服务依赖（P0 · 版本精确锁定，U6 架构师决定）
+# 安装：pip install -r requirements.lock
+# 注意：Python 3.10+；首次运行会下载 Qwen3-8B 模型（体积较大，需联网一次）
+anyjev==0.1.0
+transformers>=4.44,<5
+torch>=2.1,<3
+sentencepiece>=0.1.99

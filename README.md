@@ -172,3 +172,18 @@ Two rules keep it portable: (1) no absolute path or personal identifier in any t
 `references/`, never into `SKILL.md`'s flow.
 
 Licensed under the Apache License, Version 2.0 — see [LICENSE](LICENSE).
+
+---
+
+## 附：摸鱼 Agent 工作台（原型与设计，本次新增）
+
+> 以下内容为独立新增，**不改变**上方母版（作业 notebook 工作流）的 SKILL / 脚本 / 档案结构。
+
+- `moyu-agent-workbench/` — 本地前后端工作台原型（零依赖 Node 服务 + 原生前端），
+  含可替换大模型适配、jev fill-only 执行引擎、刷课 / 作业 / 竞赛四版块执行台，
+  以及 76 项回归测试。运行与 API 见其 [README](moyu-agent-workbench/README.md)。
+- `designs/摸鱼Agent-四版块落地-harness-design-v2.md` — 四版块落地架构设计（选型、门禁、evaluator、来源附录）。
+- [ATTRIBUTION.md](ATTRIBUTION.md) — **开源来源标注**：逐个列出参考 / 借鉴 / 依赖的第三方项目、
+  许可、来源 URL、快照日期与是否 vendored（本项目未 vendored 任何第三方源码）。
+
+新增内容沿用本仓库 Apache-2.0 许可；所有凭据字段均为占位符，敏感信息不入库。

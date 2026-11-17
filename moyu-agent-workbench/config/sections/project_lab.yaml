@@ -1,0 +1,23 @@
+# 毕设/竞赛声明式流程（P3 · 设计文档 v2 §10）
+# 方法借鉴（自研实现，不 vendored）：
+#   - yohanchen1/MathModelingAgent (MIT): Claim/Obligation/Evidence + 独立 audit
+#   - handsomeZR-netizen/mathmodel-skill (MIT): 10 阶段工作流
+id: project_lab
+name: 毕设 / 竞赛项目
+stages: [topic, research, experiment, verify, write, review]
+gates:
+  before_generate:
+    applies_to: [research, write]
+    hook: askBeforeGenerate
+  after_generate:
+    applies_to: [write]
+    hook: askAfterGenerate
+anti_hallucination:
+  claim_required: true
+  evidence_required: true
+  number_freezing: true          # 每个数字绑定来源产物 id
+  citation_integrity: true       # 每条引用必须有 sourceId
+  insufficient_evidence: INCONCLUSIVE   # 证据不足不强行 PASS
+verdicts: [PASS, FAIL, INCONCLUSIVE]
+boundary: "数字可追溯、引用须支撑论点；AI 生成边界按赛事规则标注"
+backend: mock                    # mock | bridge

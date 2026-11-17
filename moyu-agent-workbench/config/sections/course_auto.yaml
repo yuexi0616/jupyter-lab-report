@@ -1,0 +1,40 @@
+# 刷课版块声明式流程（P1 · 设计文档 v2 §10）
+# 平台能力底座：OCS 助手（ocsjs/ocsjs, MIT）。本 harness 不 vendored OCS 源码，
+# 通过 lib/course.js 定义适配契约，mock 后端离线闭环 / bridge 后端对接真实浏览器。
+id: course_auto
+name: 刷课
+kernel: ocs-adapter
+platforms:
+  - chaoxing        # 超星学习通
+  - zhihuishu       # 知到智慧树
+  - zhijiaoyun      # 职教云
+  - zhijiaozhijiao  # 智慧职教
+  - icourse163      # 中国大学MOOC
+browser:
+  backend: mock     # mock | bridge；bridge 需本地 OCS bridge 就绪，否则拒绝启动
+  headless: true
+  reuse_profile: true
+boundary:
+  advance_progress_only: true   # 只推进度
+  change_grades: false          # 不改成绩
+  produce_certificate: false    # 不产证书
+  auto_answer: false            # K4：默认关闭，需 U2 生成前询问显式授权
+  on_captcha: ask_human         # 验证码/2FA 立即暂停转人工
+steps:
+  - id: 1
+    tool: course.create
+    desc: 识别平台并创建会话
+    gate: false
+  - id: 2
+    tool: course.tick
+    desc: 推进一个章节（可重复，断点续播）
+    gate: false
+    loop_until: "progress.current == progress.total"
+  - id: 3
+    tool: eval.course
+    desc: 独立核验平台真实进度（工具回执≠业务事实）
+    gate: false
+acceptance:
+  oracle: platform_reported_progress
+  verdicts: [PASS, FAIL, INCONCLUSIVE]
+  note: mock 后端最多判 INCONCLUSIVE，不能当作真实完成
