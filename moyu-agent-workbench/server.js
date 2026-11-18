@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * 摸鱼 Agent 工作台 —— 零依赖本地后端（Node 内置 http）
+ * 摸鱼Agent工作台 —— 零依赖本地后端（Node 内置 http）
  * 形态参考 DeepSeek Harness：本地 Web UI + 后端运行时；含真实 agent loop 执行引擎。
  *
  * 安全边界：
@@ -216,7 +216,7 @@ function handleApi(req, res, url) {
   const method = req.method || 'GET';
 
   if (p === '/api/meta' && method === 'GET') {
-    return send(res, 200, { name: '摸鱼 Agent 工作台', version: data.version, updated: data.updated, snapshotNote: data.SNAPSHOT_NOTE, disclaimer: '方案原型，不执行真实自动化、不接触真实凭据。' });
+    return send(res, 200, { name: '摸鱼Agent工作台', version: data.version, updated: data.updated, snapshotNote: data.SNAPSHOT_NOTE, disclaimer: '方案原型，不执行真实自动化、不接触真实凭据。' });
   }
   if (p === '/api/sections' && method === 'GET') {
     return send(res, 200, data.sections.map(({ id, name, icon, priority, status, goal }) => ({ id, name, icon, priority, status, goal })));
@@ -598,7 +598,7 @@ server.on('error', (err) => {
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`摸鱼 Agent 工作台 v${data.version} running at http://${HOST}:${PORT}`);
+  console.log(`摸鱼Agent工作台 v${data.version} running at http://${HOST}:${PORT}`);
   console.log('含 agent loop 自动执行引擎；默认 mock，live 模式需在服务端设置模型 API key 环境变量。');
   console.log('jev 工具集 fill-only：只填输入框，绝不自动发送、不碰支付。');
   if (INSECURE) {

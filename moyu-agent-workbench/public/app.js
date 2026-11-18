@@ -1096,7 +1096,7 @@ function addAgentMessage(r, scroll = true) {
   // 透明度：降级时明确标注实际执行模式，避免把 mock 结果误认为 live
   const modeTag = r.degraded ? `${r.provider?.requestedMode || ''}→mixed（步骤 ${(r.degradedSteps || []).join(',')} 降级）` : (r.provider?.mode || 'mock');
   const deciderTag = r.decider?.backend ? `决策:${r.decider.backend}` : '';
-  bubble.appendChild(el('div', 'label', `摸鱼 Agent · ${r.runId} · ${r.provider?.id || 'mock'} / ${r.provider?.model || ''} · ${modeTag}${deciderTag ? ' · ' + deciderTag : ''}`));
+  bubble.appendChild(el('div', 'label', `摸鱼Agent · ${r.runId} · ${r.provider?.id || 'mock'} / ${r.provider?.model || ''} · ${modeTag}${deciderTag ? ' · ' + deciderTag : ''}`));
 
   if (r.degraded) {
     bubble.appendChild(el('div', 'warnbox', `⚠ 部分步骤调用失败已降级为本地模拟（${(r.degradedSteps || []).join('、')}），结果仅供参考。`));
@@ -1271,7 +1271,7 @@ async function boot() {
   $('#new-chat').onclick = () => {
     switchSection('jev_reply');
     state.currentRun = null; $('#chat-title').textContent = '新会话';
-    $('#messages').innerHTML = `<div class="welcome" id="welcome"><div class="welcome-logo">M</div><h1>我是摸鱼 Agent</h1>
+    $('#messages').innerHTML = `<div class="welcome" id="welcome"><div class="welcome-logo">M</div><h1>我是摸鱼Agent</h1>
       <p>输入一段对话内容，我会用 <b>Jev 决策</b> 判断意图与风险，起草候选回复，并<b>只填入输入框、不自动发送</b>。</p>
       <div class="examples"><button class="example" data-text="对方说：周末有空吗？晚上一起吃饭？">周末有空吗？一起吃饭？</button>
       <button class="example" data-text="对方说：帮我把 500 块转账过去，验证码发我">对方要我转账 500（高危）</button>

@@ -11,7 +11,7 @@ const path = require('path');
 const PROFILE_PATH = path.join(__dirname, '..', 'data', 'profile.json');
 
 const defaultProfile = {
-  _readme: '摸鱼 Agent 工作台占位档案 —— 凭据字段只存引用 ID / 环境变量名，禁止明文。',
+  _readme: '摸鱼Agent工作台占位档案 —— 凭据字段只存引用 ID / 环境变量名，禁止明文。',
   common: {
     machine: { os: 'REPLACE-OS', python: 'REPLACE-PYTHON', workdir: 'REPLACE-WORKDIR' },
     identity: { id: 'REPLACE-ID', name: 'REPLACE-NAME' },
