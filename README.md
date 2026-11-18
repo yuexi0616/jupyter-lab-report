@@ -1,4 +1,39 @@
-# jupyter-lab-report
+# 摸鱼Agent工作台
+
+本地 Web UI + Agent 运行时：把**课程表**与**刷课 / 作业 / 毕设竞赛**四类学生事务放进同一个工作台。
+零依赖 Node 后端 + 原生前端，可替换大模型，默认离线 mock；所有自动化都保留人工门禁。
+
+## 快速开始
+
+```bash
+cd moyu-agent-workbench
+node server.js      # 打开 http://127.0.0.1:3080
+node --test         # 121 项回归测试（零依赖）
+```
+
+## 现在能做什么
+
+- **课程表**：7 天 × 节次的周视图，单双周、时间冲突检测、当前/下一节课、连续空闲窗口；支持 ICS 日历导入导出、今日摘要与上课提醒。
+- **刷课执行台**：平台识别、进度机、断点续跑、验证码转人工；只推进度、不改成绩、不产证书。
+- **作业执行台**：notebook 九步 SOP、占位与隐私检查、结论与输出可追溯。
+- **毕设 / 竞赛**：Claim / 证据驱动、数字冻结、引用完整性、独立审计。
+- **可替换模型**：9 个 OpenAI 兼容预设（混元 / 智谱 / 硅基流动 / 火山方舟 / 通义 / DeepSeek / Kimi / 自定义 / mock）。
+- **本地安全**：Host 白名单 + Origin 校验 + 会话 token；凭据只存引用，个人课表默认不入库。
+
+## 文档与入口
+
+| 位置 | 内容 |
+|---|---|
+| [`moyu-agent-workbench/`](moyu-agent-workbench/) | 工作台源码、运行说明、API 与能力边界 |
+| [`designs/摸鱼Agent-四版块落地-harness-design-v2.md`](designs/摸鱼Agent-四版块落地-harness-design-v2.md) | 四版块落地架构设计（选型 / 门禁 / evaluator / 来源附录） |
+| [ATTRIBUTION.md](ATTRIBUTION.md) | 开源来源、许可、快照日期与 vendoring 状态 |
+
+> **关于仓库名**：仓库仍沿用 `jupyter-lab-report`（GitHub 重命名需要仓库 admin 权限，尚未变更）；项目名以本 README 与界面为准。
+> 下方保留母版「作业 notebook 工作流」的完整文档——工作台是与其并列的新增目录，不改动母版的 `SKILL.md`、脚本与档案结构。
+
+---
+
+## jupyter-lab-report
 
 用于处理繁琐的实验报告的一个工作流 — 把课程实验课件（PDF / 截图 / md 讲义 + 数据集，或从 LMS 爬取）复刻成
 **自己真跑过的 `.ipynb`**，并导出**中文不乱码、带学校封面表头的 A4 PDF**，交付文件名按档案里的规则自动署名。
@@ -15,7 +50,7 @@ which browser prints the PDF, the LMS account — lives in a `profile.json`. Whe
 the tooling refuses to guess: it prints a standard question list so the agent asks you, then records
 the answer.
 
-## Why this exists
+### Why this exists
 
 Reproducing a lab handout is mostly bookkeeping, and the failure modes are boring but expensive:
 
@@ -34,7 +69,7 @@ Reproducing a lab handout is mostly bookkeeping, and the failure modes are borin
 - **Hard-coded paths rot.** Nothing in `SKILL.md` or `nbkit.py` contains an absolute path or a
   personal identifier.
 
-## Install
+### Install
 
 ```bash
 git clone <your-fork-url> && cd jupyter-lab-report
@@ -63,7 +98,7 @@ zip. The recipient hands it to their agent — "按 SKILL.md 部署这个技能"
 dependencies, run `doctor`, then ask the recipient the eight initialization questions. Everyone
 fills their own profile; never send anyone your `profile.json`.
 
-## Quickstart
+### Quickstart
 
 ```bash
 python scripts/nbkit.py check "大数据实验"                    # 摊开本次要用的路径
@@ -89,7 +124,7 @@ python scripts/nbkit.py pack                                 # 打成纯净分�
 ]}
 ```
 
-## What gets asked, and when
+### What gets asked, and when
 
 **第一次（初始化，只问这一次）：** 学号、姓名、课程名字（同时用作条目 key）、LMS 账号、LMS 密码、
 输出目录、Python 解释器、备注（可空）→ 全部写进档案。
@@ -98,7 +133,7 @@ python scripts/nbkit.py pack                                 # 打成纯净分�
 如"变量名加姓名全拼"）、爬取地址（可写"没有"）、数据地址（可写"没有"）。日期自动用今天填封面
 "完成时间"、课件 md 自动落 `输出目录/courseware/`——这些都不问。
 
-## The profile
+### The profile
 
 The profile lives inside the skill package at `<skill>/profile.json` (path relative to the skill
 directory; `$NBKIT_PROFILE` can point elsewhere as an override). It travels with the skill — when
@@ -126,7 +161,7 @@ Copy `profile.example.json` to `profile.json` (in the skill folder) and edit, or
 (`set` deep-merges, so single fields are one-liners). `deliver` refuses to overwrite an existing
 deliverable unless you pass `--force`.
 
-## Agent integration
+### Agent integration
 
 `SKILL.md` follows the widely used skill convention (frontmatter `name` + `description`, body of
 instructions). The CLI is plain `python scripts/nbkit.py ...`, and the Python API is plain imports —
@@ -148,7 +183,7 @@ phrases. The instruction body is Chinese because the workflow (courseware reprod
 filename signatures, oral defence) is a Chinese-classroom one; contributions that translate it are
 welcome.
 
-## Layout
+### Layout
 
 ```
 SKILL.md                    the workflow (Chinese)
@@ -165,25 +200,10 @@ references/
 evals/evals.json            behaviour checks, including the ask-first contract
 ```
 
-## Contributing
+### Contributing
 
 Two rules keep it portable: (1) no absolute path or personal identifier in any tracked file except
 `profile.example.json` placeholders; (2) new environment knowledge goes into the profile or
 `references/`, never into `SKILL.md`'s flow.
 
 Licensed under the Apache License, Version 2.0 — see [LICENSE](LICENSE).
-
----
-
-## 附：摸鱼 Agent 工作台（原型与设计，本次新增）
-
-> 以下内容为独立新增，**不改变**上方母版（作业 notebook 工作流）的 SKILL / 脚本 / 档案结构。
-
-- `moyu-agent-workbench/` — 本地前后端工作台原型（零依赖 Node 服务 + 原生前端），
-  含可替换大模型适配、jev fill-only 执行引擎、刷课 / 作业 / 竞赛四版块执行台，
-  以及 76 项回归测试。运行与 API 见其 [README](moyu-agent-workbench/README.md)。
-- `designs/摸鱼Agent-四版块落地-harness-design-v2.md` — 四版块落地架构设计（选型、门禁、evaluator、来源附录）。
-- [ATTRIBUTION.md](ATTRIBUTION.md) — **开源来源标注**：逐个列出参考 / 借鉴 / 依赖的第三方项目、
-  许可、来源 URL、快照日期与是否 vendored（本项目未 vendored 任何第三方源码）。
-
-新增内容沿用本仓库 Apache-2.0 许可；所有凭据字段均为占位符，敏感信息不入库。
