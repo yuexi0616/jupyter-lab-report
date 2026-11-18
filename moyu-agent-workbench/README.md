@@ -1,14 +1,16 @@
 # 摸鱼 Agent 工作台（方案原型 v0.2）
 
-一个**本地前后端工作台**，用 Web UI 浏览「摸鱼 agent」三版块方案（作业版块模板 → 刷课 / jev 自动回复 / 毕设竞赛）、查看 GitHub 选型、模拟任务计划与审批门禁、编辑脱敏档案、跑体检。
+一个**本地前后端工作台**：用 Web UI 管理**课程表**，浏览「摸鱼 agent」四版块方案（作业版块模板 → 刷课 / jev 自动回复 / 毕设竞赛），查看 GitHub 选型、模拟任务计划与审批门禁、编辑脱敏档案、跑体检。
 
 形态参考 DeepSeek Harness（dsh）的「本地 Web UI + 后端运行时」，含**自动任务执行引擎**（agent loop：计划→工具调用→观察→反思→闭环）：
 - ✅ 零依赖（Node 内置 http，不需要 `npm install`）
 - ✅ 前端原生 HTML/CSS/JS，无构建步骤
+- ✅ **课程表**：周视图、单双周、当前/下节课、冲突检测、连续空闲窗口、ICS 日历导入导出、今日摘要与上课提醒（纯本地，不登录教务系统）
 - ✅ 可替换大模型：9 个预设（腾讯混元 Hy4/智谱/硅基流动/火山方舟/通义/DeepSeek/Kimi/自定义/mock），均 OpenAI 兼容
 - ✅ jev 场景闭环：决策→起草→排序→fill-only 填入→审计，含 gate 审批、重试/降级
 - ✅ 真实桌面模式：剪贴板读写（Windows），读对方消息 → 写回复到剪贴板，fill-only
 - ❌ 不自动发送消息、不碰支付、不接真实聊天软件；屏幕读取因安全策略禁用
+- ❌ 不登录教务系统、不爬取、不代抢课；课程表数据只存本机
 - ❌ API key 只从服务端环境变量读取，不落盘、不经过前端
 
 ## 运行
@@ -23,7 +25,7 @@ node server.js
 
 自定义端口：`MOYU_PORT=3081 node server.js`
 
-运行回归测试（零依赖，Node 内置 test runner，含单测 + HTTP 集成测试共 27 项）：
+运行回归测试（零依赖，Node 内置 test runner，含单测 + HTTP 集成测试共 121 项）：
 
 ```bash
 node --test
@@ -36,6 +38,7 @@ node --test
 | 页面 | 内容 |
 |---|---|
 | 总览 | 三版块卡片、架构四层图、迭代路线表 |
+| **课程表** | 七周日视图（节次 × 星期）、单双周过滤、当前/下节课、连续空闲窗口、课程增删改、学期设置、JSON/ICS 导入、导出日历、上课提醒、独立自检 |
 | 刷课 / jev / 毕设竞赛 | 各版块六项 + 与模板复用关系 + GitHub 选型表 |
 | 会话 / 计划 | 选版块 → 生成模拟命令链 → 审批门禁（gate）演示 |
 | **自动执行** | 选模型 + 填会话快照 → 跑 agent loop → 看决策/候选/填入/轨迹/异常；含历史运行 |
@@ -58,6 +61,19 @@ node --test
 | POST | `/api/agent/run` | `{preset, task, approvals, ...}` → 真实 agent loop 闭环，落盘轨迹 |
 | GET | `/api/agent/runs` `/api/agent/runs/:id` | 历史运行 / 单次轨迹 |
 | GET | `/api/projects/search?q=` | 全部开源选型，可过滤 |
+| GET | `/api/timetable/meta` | 星期/节次/周次语法/边界说明 |
+| GET | `/api/timetable?week=` | 指定周视图 + 今日 + 冲突 + 空闲窗口（`?at=` 可注入时钟） |
+| GET | `/api/timetable/today` | 当前课 / 下一节 / 今日空闲 |
+| GET | `/api/timetable/digest` | 今日摘要（侧栏 + 提醒器用；`?at=` 可注入时钟） |
+| POST | `/api/timetable/term` | `{name,startDate,totalWeeks,periods?}` 设置学期 |
+| POST | `/api/timetable/courses` | 添加课程，冲突返回 409（`force:true` 可强制） |
+| PUT/DELETE | `/api/timetable/courses/:id` | 修改 / 删除单门课程 |
+| DELETE | `/api/timetable/courses` | 清空全部课程 |
+| POST | `/api/timetable/import` | `{term,courses,mode,dryRun}` 批量导入（预校验不写盘） |
+| POST | `/api/timetable/import/ics` | `{ics,mode,dryRun}` 导入 .ics（需先设学期；事务式） |
+| GET | `/api/timetable/export.ics` | 导出 `text/calendar`（含 10 分钟提醒） |
+| POST | `/api/timetable/demo` | 载入示例课表（demo=true，可清空） |
+| POST | `/api/timetable/eval` | 独立自检（PASS/FAIL/INCONCLUSIVE） |
 | GET | `/api/course/meta` `/api/course/sessions` | 刷课平台清单/后端信息、会话列表 |
 | POST | `/api/course/create` | `{url,total,sessionId}` → 识别平台并创建会话（答题不可开启） |
 | POST | `/api/course/{id}/tick\|pause\|resume\|eval` | 推进章节 / 断点暂停恢复 / 验证码后恢复 / 独立核验 |
@@ -101,7 +117,7 @@ node server.js
   ```
   服务不可用时**失败转人工、绝不静默降级为 mock**（mock 高危判断靠关键词会漏判）。模型 id `Qwen/Qwen3-8B` 为能力余量选择，作者自报的 0.730 分数属 1.7B、本项目不引用其背书。
 - **U2 两道询问门禁**：生成前询问（前端发送按钮两段式确认："发送"→"确认生成？"，4 秒超时复位）+ 完成后询问（fill-only，回复只填入输入框、用户手动决定发送）。`lib/agent.js` 提供 `askHooks.beforeGenerate` / `afterGenerate` 服务端钩子，未采用则草稿作废、禁止填入，全程写 trace。
-- P0 阶段测试 10 项（全项目最终 **76 项**全绿；测试用独立 runs 目录隔离，不污染真实数据）。
+- P0 阶段测试 10 项（全项目最终 **121 项**全绿；测试用独立 runs 目录隔离，不污染真实数据）。
 
 ## P1：刷课执行台（OCS 能力底座）
 
@@ -113,7 +129,7 @@ node server.js
 - **K4 自动答题（用户决定不保守处理）**：默认关闭，但**允许显式开启**——须携带 U2 生成前询问签发的一次性 `answerAuthToken`，无 token 返回 `AUTO_ANSWER_AUTH_REQUIRED`（403）。开启后每次答题副作用记入轨迹，学术诚信责任由用户显式确认承担。
 - **独立核验**（`lib/eval/course.eval.js`）：以平台真实进度为 oracle，三态 PASS/FAIL/INCONCLUSIVE（借鉴 MathModelingAgent 证据驱动）。**离线 mock 后端最多判 INCONCLUSIVE**——不把模拟进度当真实完成，这是"工具回执≠业务事实"的落实。
 - **可插拔 bridge**：默认 `mock`；接入真实浏览器需本地 OCS bridge（监听 `:11437`，提供 `/tick`、`/progress`），设 `MOYU_COURSE_BACKEND=bridge`。bridge 不可用时**拒绝启动**，不伪造进度。用 `MOYU_COURSE_STATE_DIR` 可改会话存储目录。
-- 全量测试最终 **76 项**（core 15 + http 12 + p0 10 + p1 15 + p2 12 + p3 12）全绿。
+- 全量测试最终 **121 项**（core 15 + http 20 + p0 10 + p1 15 + p2 12 + p3 12 + p4 22 + p5 15）全绿。
 
 > **诚实说明**：离线 mock 下进度是模拟值，仅验证流程与边界；真实刷课需你自己部署 OCS/bridge 并在目标平台授权。本项目不提供、不内置任何绕过平台验证的能力。
 
@@ -134,6 +150,27 @@ node server.js
 
 > **诚实说明**：P2/P3 目前是离线 mock（流程、门禁、反幻觉规则可验证），产物为模拟。真实执行需你自己部署 bridge 对接 jupyter/检索/编译环境。
 
+## P4：课程表（本地学期时间底座）
+
+课程表是**真实功能模块**，不是方案卡片：它把「什么时候上课、什么时候连续空闲」变成可查询的本地事实，供刷课 / 作业等版块判断排期。
+
+- **周视图**（`public/app.js`）：7 天 × 12 节的网格，课程块按节次跨行着色；单双周按周次表达式过滤；上一周 / 本周 / 下一周切换。
+- **能力层**（`lib/timetable.js`）：
+  - 学期：`startDate`（第 1 周周一）+ `totalWeeks` + 可选自定义作息（节次时间表）；
+  - 周次语法：`1-16` / `1-16单` / `2-16双` / `1,3,5-9`，解析失败**明确报错不猜**；
+  - 冲突：同一天 + 节次重叠 + 周次有交集 → 默认拒绝写入（HTTP 409），`force:true` 可强制并标记 `conflict`；
+  - 今日：当前课（含剩余分钟）/ 下一节（含倒计时，可跨天）；
+  - 空闲窗口：按节次表计算连续空闲段（默认 ≥2 节），用于「摸鱼窗口」。
+- **独立自检**（`lib/eval/timetable.eval.js`）：重新解析落盘数据，检查结构、重复 id、冲突、周次越界；三态 `PASS` / `FAIL` / `INCONCLUSIVE`。空课表或未设学期判 **INCONCLUSIVE**，不把「没数据」当「没问题」。
+- **批量导入**：JSON `{term, courses}`，`dryRun` 预校验不写盘；有任一错误则整体拒绝（事务式）。
+- **ICS 日历通道**（`lib/ics.js`）：导入教务系统/手机日历导出的 `.ics`（WEEKLY 重复规则、COUNT/UNTIL/INTERVAL/BYDAY、行折叠、±10 分钟节次容差），日期按学期换算成周次；导出 `.ics` 可导入手机日历并带**上课前 10 分钟提醒**。**只读文件，不需要账号密码**；不支持的规则（DAILY/MONTHLY、全天事件、EXDATE）明确给出 warning 而不是猜。
+- **课程编辑**：点课程块回填表单 →「保存修改」（PUT），不必删除重建。
+- **今日摘要与上课提醒**：`digest()` 统一生成文案（侧栏显示「第 N 周 · 今天 X 节 · 下一节 14:00 体育」）；课程表内可开启浏览器通知，**上课前 10 分钟与 1 分钟各提醒一次**，已提醒课次记在 `localStorage`（`moyu_tt_sent`）去重，不会重复打扰。需保持页面打开；不申请定位/麦克风等权限，课表数据不出本机。通知被拒绝时会提示改用导出的 `.ics` 到手机日历。
+- **数据位置**：`data/timetable.json`（个人数据，已加入 `.gitignore`），可用 `MOYU_TIMETABLE_FILE` 覆盖；测试用独立临时文件，互不污染。
+- **边界（硬编码）**：不登录教务系统、不爬取、不代抢课、不修改学校数据；不提供「自动排课」——课表是事实输入，排期决策仍归用户。
+
+> 示例课表（`POST /api/timetable/demo`）明确标记 `demo=true`，前端提示「示例数据」，可一键清空。
+
 ## 目录
 
 ```
@@ -148,9 +185,12 @@ moyu-agent-workbench/
   lib/course.js           # 刷课能力层（平台识别/进度机/断点/验证码/边界）
   lib/homework.js         # 作业能力层（notebook SOP/脱敏/追溯）
   lib/project.js          # 竞赛能力层（证据驱动/数字冻结/引用完整性）
+  lib/timetable.js        # 课程表能力层（学期/周次/冲突/今日/空闲窗口/导入）
+  lib/ics.js              # iCalendar 解析与生成（教务系统/日历 .ics 通道）
   lib/eval/course.eval.js # 刷课独立核验（三态/权威进度）
   lib/eval/homework.eval.js # 作业独立核验
   lib/eval/project.eval.js  # 竞赛独立审计（Claim 三态）
+  lib/eval/timetable.eval.js # 课程表独立自检（结构/冲突/周次越界）
   config/decider.json     # 决策后端配置
   config/sections/*.yaml  # 版块声明式流程
   tools_python/           # 可选 Python 工具（AnyJev 决策服务）
@@ -158,6 +198,7 @@ moyu-agent-workbench/
   public/app.js           # 前端视图与交互（含自动执行面板）
   public/style.css        # 深色主题样式
   data/profile.json       # 占位档案（首次运行自动生成，全为 REPLACE-*）
+  data/timetable.json     # 个人课表（首次添加课程时生成；默认 gitignore，不提交）
   runs/                   # 运行轨迹与审计日志（默认脱敏 + 保留期清理）
   test/core.test.js       # 核心逻辑单测（extractJson/清洗/门禁/降级/脱敏）
   test/http.test.js       # HTTP 集成测试（访问控制/审批凭证/方案数据）
@@ -165,6 +206,8 @@ moyu-agent-workbench/
   test/p1.test.js         # P1 专项（平台识别/进度机/验证码/核验三态）
   test/p2.test.js         # P2 专项（SOP/脱敏/追溯/U2门禁/核验三态）
   test/p3.test.js         # P3 专项（证据驱动/数字冻结/引用/独立审计）
+  test/p4.test.js         # P4 专项（周次解析/冲突/今日/空闲窗口/导入/自检）
+  test/p5.test.js         # P5 专项（ICS 解析/重复规则/节次映射/导出回环/事务性）
   docs/方案-v0.2.md        # 三版块方案
   docs/自动执行方案.md      # 模型替换/接口适配/能力范围/异常处理/验收标准
   README.md
@@ -192,5 +235,6 @@ moyu-agent-workbench/
 - 凭据字段采用**正向白名单**，只允许 `{ref, env, encrypted:true}`，任何未知字段（含 `token`/`apiKey` 等）保存时一律丢弃，杜绝明文夹带。
 - 审计与轨迹**默认脱敏**：对话原文只存 SHA-256 指纹，不落明文；需要完整内容做本地调试时显式设 `MOYU_AUDIT_FULL=1`（自带风险）。侧栏标题仅保留前 24 字预览。
 - 运行记录有保留期与上限：默认 7 天 / 最多 100 个 run，可用 `MOYU_RUN_TTL_DAYS`、`MOYU_RUN_MAX` 调整（设为 0 关闭）。
+- **课表属个人数据**：含作息、教室与教师，`data/timetable.json` 默认被 `.gitignore` 忽略；接口同样受 Host/Origin/token 三重防护，不联网、不上传。
 - `data/profile.json` 是可分享的占位档案，不含真实信息；`pack` 语义上不带出凭据引用清单。
 - 本工作台不会主动访问外部网络；仅在选择 live 模型时由服务端按环境变量中的 key 调用对应 API。

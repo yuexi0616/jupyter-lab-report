@@ -4,26 +4,28 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="color-scheme" content="dark" />
-<title>摸鱼 Agent · 四版块工作台</title>
+<title>摸鱼 Agent · 课程表 + 四版块工作台</title>
 <!-- Anti-FOUC：在首帧前锁定深色，避免原生控件/滚动条闪白 -->
 <script>try{document.documentElement.style.colorScheme='dark'}catch(e){}</script>
 <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
 <div class="app">
-  <!-- 左侧：四个平级版块入口 + 会话列表 + 次要工具 -->
+  <!-- 左侧：五个平级入口（课程表 + 四版块） + 会话列表 + 次要工具 -->
   <aside class="sidebar">
     <div class="brand">
       <div class="brand-mark">M</div>
       <div class="brand-text">
         <div class="brand-name">摸鱼 Agent</div>
-        <div class="brand-sub">四版块工作台 · v<span id="ver">—</span></div>
+        <div class="brand-sub">课程表 · 四版块工作台 · v<span id="ver">—</span></div>
       </div>
     </div>
 
+    <div class="today-line" id="today-line" hidden></div>
+
     <button class="new-chat" id="new-chat">＋ 新建会话</button>
 
-    <div class="side-label">版块 · 平级</div>
+    <div class="side-label">工作区 · 平级</div>
     <nav class="section-nav" id="section-nav"></nav>
 
     <div class="side-label">会话 · 回复建议 <button class="clear-runs" id="clear-runs" title="删除全部会话">清空</button></div>
@@ -90,6 +92,9 @@
 
     <!-- 视图 B：刷课 / 作业版块 / 毕设竞赛 的方案工作台（无对话输入框） -->
     <main class="workbench" id="workbench-view" hidden></main>
+
+    <!-- 视图 C：课程表（真实功能模块，独立周视图，不套方案卡片） -->
+    <main class="timetable" id="timetable-view" hidden></main>
   </div>
 
   <!-- 右侧：全局抽屉（选型总表 / 环境档案 / 体检） -->

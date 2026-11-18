@@ -44,8 +44,15 @@ async function api(pathname, { method = 'GET', token, host, origin, body } = {})
 }
 
 test.before(async () => {
+  // 清理上次异常退出可能残留的课表/运行目录，保证断言起点确定
+  try { require('fs').rmSync(path.join(__dirname, '.tmp-timetable-http.json'), { force: true }); } catch (_) {}
   child = spawn(process.execPath, [SERVER], {
-    env: { ...process.env, MOYU_PORT: String(PORT), MOYU_RUNS_DIR: path.join(__dirname, '.tmp-runs-http') },
+    env: {
+      ...process.env,
+      MOYU_PORT: String(PORT),
+      MOYU_RUNS_DIR: path.join(__dirname, '.tmp-runs-http'),
+      MOYU_TIMETABLE_FILE: path.join(__dirname, '.tmp-timetable-http.json'),
+    },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   await waitReady();
@@ -53,6 +60,7 @@ test.before(async () => {
 test.after(() => {
   if (child && !child.killed) child.kill();
   try { require('fs').rmSync(path.join(__dirname, '.tmp-runs-http'), { recursive: true, force: true }); } catch (_) {}
+  try { require('fs').rmSync(path.join(__dirname, '.tmp-timetable-http.json'), { force: true }); } catch (_) {}
 });
 
 async function fetchToken() {
@@ -162,4 +170,101 @@ test('HTTP: 审批凭证无效字符串被拒（403）', async () => {
   const token = await fetchToken();
   const r = await api('/api/agent/run', { method: 'POST', token, body: { preset: 'mock', task: 'hi', approvalToken: 'fake-token' } });
   assert.equal(r.status, 403);
+});
+
+// ---------- 课程表（P4） ----------
+test('HTTP: 课程表 meta / 空视图可用', async () => {
+  const token = await fetchToken();
+  const meta = await api('/api/timetable/meta', { token });
+  assert.equal(meta.status, 200);
+  assert.equal(meta.json.weekdays.length, 7);
+  assert.ok(meta.json.periods.length >= 8);
+  const view = await api('/api/timetable', { token });
+  assert.equal(view.status, 200);
+  assert.equal(view.json.days.length, 7);
+  assert.ok(Array.isArray(view.json.today.courses));
+});
+test('HTTP: 设置学期 + 添加课程 + 周视图 + 自检（PASS）', async () => {
+  const token = await fetchToken();
+  const term = await api('/api/timetable/term', { method: 'POST', token, body: { name: '测试学期', startDate: '2026-09-07', totalWeeks: 20 } });
+  assert.equal(term.status, 200);
+  const add = await api('/api/timetable/courses', {
+    method: 'POST', token,
+    body: { name: '高等数学', day: 1, startPeriod: 1, endPeriod: 2, weeks: '1-16' },
+  });
+  assert.equal(add.status, 200);
+  assert.equal(add.json.course.name, '高等数学');
+  const view = await api('/api/timetable?week=1', { token });
+  assert.equal(view.status, 200);
+  assert.equal(view.json.week, 1);
+  assert.equal(view.json.days[0].courses.length, 1);
+  const ev = await api('/api/timetable/eval', { method: 'POST', token });
+  assert.equal(ev.status, 200);
+  assert.equal(ev.json.verdict, 'PASS');
+});
+test('HTTP: 时间冲突返回 409 并带 conflicts', async () => {
+  const token = await fetchToken();
+  const r = await api('/api/timetable/courses', {
+    method: 'POST', token,
+    body: { name: '冲突课', day: 1, startPeriod: 2, endPeriod: 3, weeks: '1-16' },
+  });
+  assert.equal(r.status, 409);
+  assert.equal(r.json.code, 'TIMETABLE_CONFLICT');
+  assert.ok(r.json.conflicts.length >= 1);
+});
+test('HTTP: 非法课程返回 400 且不写入', async () => {
+  const token = await fetchToken();
+  const before = await api('/api/timetable', { token });
+  const r = await api('/api/timetable/courses', {
+    method: 'POST', token,
+    body: { name: '坏课', day: 9, startPeriod: 1, endPeriod: 2, weeks: 'abc' },
+  });
+  assert.equal(r.status, 400);
+  const after = await api('/api/timetable', { token });
+  assert.equal(after.json.stats.courses, before.json.stats.courses, '非法请求不应写入');
+});
+test('HTTP: 课程表接口同样受 token 保护（401）', async () => {
+  const r = await api('/api/timetable/meta');
+  assert.equal(r.status, 401);
+});
+test('HTTP: 今日摘要 digest 可直接用于侧栏与提醒', async () => {
+  const token = await fetchToken();
+  const r = await api('/api/timetable/digest', { token });
+  assert.equal(r.status, 200);
+  assert.equal(typeof r.json.text, 'string');
+  assert.equal(typeof r.json.courseCount, 'number');
+  const at = await api('/api/timetable/digest?at=2026-09-07T08:10:00', { token });
+  assert.equal(at.status, 200);
+  assert.equal(at.json.week, 1);
+  assert.equal(at.json.weekdayName, '周一');
+});
+test('HTTP: 导出 .ics 返回 text/calendar 且内容合法', async () => {
+  const token = await fetchToken();
+  const r = await fetch(BASE + '/api/timetable/export.ics', { headers: { 'X-Moyu-Token': token } });
+  assert.equal(r.status, 200);
+  assert.match(r.headers.get('content-type') || '', /text\/calendar/);
+  const body = await r.text();
+  assert.match(body, /^BEGIN:VCALENDAR/);
+  assert.match(body, /END:VCALENDAR/);
+});
+test('HTTP: ICS 预校验不写入，正式导入成功', async () => {
+  const token = await fetchToken();
+  const ics = [
+    'BEGIN:VCALENDAR', 'VERSION:2.0',
+    'BEGIN:VEVENT', 'DTSTART:20260912T100000', 'DTEND:20260912T114000',
+    'SUMMARY:周六选修', 'LOCATION:教二-101', 'RRULE:FREQ=WEEKLY;COUNT=4',
+    'END:VEVENT', 'END:VCALENDAR',
+  ].join('\r\n');
+  const before = await api('/api/timetable', { token });
+  const dry = await api('/api/timetable/import/ics', { method: 'POST', token, body: { ics, dryRun: true } });
+  assert.equal(dry.status, 200);
+  assert.equal(dry.json.ok, true);
+  const mid = await api('/api/timetable', { token });
+  assert.equal(mid.json.stats.courses, before.json.stats.courses, '预校验不应写入');
+
+  const real = await api('/api/timetable/import/ics', { method: 'POST', token, body: { ics } });
+  assert.equal(real.status, 200);
+  assert.equal(real.json.imported, 1);
+  const after = await api('/api/timetable', { token });
+  assert.equal(after.json.stats.courses, before.json.stats.courses + 1);
 });

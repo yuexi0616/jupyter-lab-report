@@ -10,6 +10,8 @@ const state = {
   activeSection: 'jev_reply',
   detailCache: {},
   planBusy: false,
+  ttWeek: null,
+  ttEditing: null,
 };
 
 /**
@@ -18,6 +20,7 @@ const state = {
  */
 const NAV_SECTIONS = [
   { id: 'jev_reply', name: '回复建议', icon: '✦', hint: '对话式' },
+  { id: 'timetable', name: '课程表', icon: '▦', hint: '周视图' },
   { id: 'course_auto', name: '刷课', icon: '▶', hint: '工作台' },
   { id: 'homework', name: '作业版块', icon: '▤', hint: '母版工作台' },
   { id: 'project_lab', name: '毕设 / 竞赛', icon: '∑', hint: '工作台' },
@@ -31,7 +34,12 @@ const SESSION_TOKEN = document.querySelector('meta[name="moyu-token"]')?.content
 async function api(path, opts = {}) {
   const headers = Object.assign({}, opts.headers || {}, SESSION_TOKEN ? { 'X-Moyu-Token': SESSION_TOKEN } : {});
   const r = await fetch(path, { ...opts, headers });
-  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'HTTP ' + r.status);
+  if (!r.ok) {
+    const payload = await r.json().catch(() => ({}));
+    const err = new Error(payload.error || 'HTTP ' + r.status);
+    err.code = payload.code; err.payload = payload; err.status = r.status;
+    throw err;
+  }
   return r.json();
 }
 const get = (p) => api(p);
@@ -75,8 +83,11 @@ async function switchSection(id) {
   renderNav();
 
   const isWorkbench = WORKBENCH_IDS.includes(id);
-  $('#chat-view').hidden = isWorkbench;
+  const isTimetable = id === 'timetable';
+  $('#chat-view').hidden = isWorkbench || isTimetable;
   $('#workbench-view').hidden = !isWorkbench;
+  $('#timetable-view').hidden = !isTimetable;
+  if (isTimetable) return renderTimetable();
   if (!isWorkbench) return;
 
   const wb = $('#workbench-view');
@@ -421,6 +432,612 @@ async function generatePlan() {
   }
 }
 
+// ---------- 课程表（P4） ----------
+// 独立周视图：不套"方案工作台"外壳，因为这是真实可用功能，不是方案卡片。
+// 数据全部来自 /api/timetable，前端不保存课表副本（单一事实源）。
+const TT = { data: null, reminder: { started: false } };
+const TT_WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+const TT_WEEK_MAX = 30;
+const TT_REMIND_KEY = 'moyu_tt_remind';
+const TT_SENT_KEY = 'moyu_tt_sent';
+
+/** 侧栏今日摘要：第几周 · 今天几节 · 正在上/下一节。失败则静默隐藏。 */
+async function refreshTodayLine() {
+  const line = $('#today-line');
+  if (!line) return;
+  try {
+    const d = await get('/api/timetable/digest');
+    if (!d.hasTerm) { line.hidden = true; return; }
+    const bits = [];
+    if (d.week != null && d.week >= 1) bits.push(`第 ${d.week} 周`);
+    bits.push(d.courseCount ? `今天 ${d.courseCount} 节` : '今天没课');
+    if (d.current) bits.push(`正在上 ${d.current.name}`);
+    else if (d.next && d.next.dayOffset === 0) bits.push(`下一节 ${d.next.startAt} ${d.next.name}`);
+    else if (d.next) bits.push(`下节 ${d.next.dayName} ${d.next.startAt}`);
+    line.textContent = bits.join(' · ');
+    line.title = d.text;
+    line.hidden = false;
+  } catch (_) { line.hidden = true; }
+}
+
+/** 上课提醒：仅在用户显式开启且已授权通知时生效；本地判断，不上传任何数据。 */
+async function ttTickReminders() {
+  if (localStorage.getItem(TT_REMIND_KEY) !== '1') return;
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  let d;
+  try { d = await get('/api/timetable/digest'); } catch (_) { return; }
+  const n = d.next;
+  // 只提醒今天的下一节；跨天课程交给日历/次日首次打开
+  if (!n || n.dayOffset !== 0 || n.startsInMin == null) return;
+  let sent = [];
+  try { sent = JSON.parse(localStorage.getItem(TT_SENT_KEY) || '[]'); } catch (_) { sent = []; }
+  if (!Array.isArray(sent)) sent = [];
+  for (const th of [10, 1]) {
+    // 轮询 60s，留 2 分钟窗口，避免定时器节流导致错过
+    if (n.startsInMin > th || n.startsInMin < th - 2) continue;
+    const key = `${n.courseId}|${d.date}|${n.startAt}|${th}`;
+    if (sent.includes(key)) continue;
+    sent.push(key);
+    try { localStorage.setItem(TT_SENT_KEY, JSON.stringify(sent.slice(-50))); } catch (_) {}
+    try {
+      new Notification(`${n.name} ${th} 分钟后上课`, {
+        body: `${n.startAt} · ${n.location || '地点未填'} · 第 ${n.startPeriod}-${n.endPeriod} 节`,
+        tag: key,
+      });
+    } catch (_) {}
+  }
+}
+function ttStartReminderTicker() {
+  if (TT.reminder.started) return;
+  TT.reminder.started = true;
+  ttTickReminders();
+  setInterval(ttTickReminders, 60000);
+}
+
+function ttHashHue(s) {
+  let h = 0;
+  for (const ch of String(s || '')) h = (h * 31 + ch.codePointAt(0)) % 360;
+  return h;
+}
+function ttFmtMin(n) {
+  n = Math.max(0, Math.round(Number(n) || 0));
+  if (n < 60) return `${n} 分钟`;
+  const m = n % 60;
+  return m ? `${Math.floor(n / 60)} 小时 ${m} 分` : `${Math.floor(n / 60)} 小时`;
+}
+function ttMonday(now = new Date()) {
+  const d = new Date(now);
+  d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+  return d;
+}
+function ttIso(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+async function renderTimetable({ week } = {}) {
+  const box = $('#timetable-view');
+  if (!box) return;
+  if (week !== undefined) state.ttWeek = week;
+  const q = new URLSearchParams();
+  if (state.ttWeek) q.set('week', String(state.ttWeek));
+  box.innerHTML = '<div class="wb-loading muted">加载课表…</div>';
+  try {
+    TT.data = await get('/api/timetable' + (q.toString() ? '?' + q.toString() : ''));
+  } catch (e) {
+    box.innerHTML = `<div class="warnbox" style="margin:24px">课表加载失败：${esc(e.message)}</div>`;
+    return;
+  }
+  if (state.activeSection !== 'timetable') return;
+  if (TT.data.week) state.ttWeek = TT.data.week;
+  paintTimetable();
+}
+
+function ttBannerHtml(v) {
+  const out = [];
+  if (!v.term) {
+    out.push('<div class="warnbox">还没有设置学期。先填「开学日期（第 1 周周一）」与总周数，或先载入示例课表体验。</div>');
+  } else if (v.currentWeek != null && v.currentWeek < 1) {
+    out.push(`<div class="note">学期尚未开始（开学 ${esc(v.term.startDate)}），当前预览第 1 周。</div>`);
+  } else if (v.currentWeek != null && v.currentWeek > v.term.totalWeeks) {
+    out.push(`<div class="note">学期已结课（共 ${v.term.totalWeeks} 周），当前预览学期最后一周的课程安排。</div>`);
+  }
+  if (v.demo) out.push('<div class="note">当前是<b>示例课表</b>（demo），可随时「清空全部」后录入自己的课。</div>');
+  if (v.conflicts && v.conflicts.length) {
+    const list = v.conflicts.slice(0, 3).map((c) => `「${esc(c.aName)}」×「${esc(c.bName)}」${TT_WEEKDAYS[c.day - 1]} 第 ${c.sharedWeeks.join(',')} 周`);
+    out.push(`<div class="warnbox">检测到 ${v.conflicts.length} 处时间冲突：${list.join('；')}${v.conflicts.length > 3 ? '…' : ''}。请删除或调整冲突课程。</div>`);
+  }
+  return out.join('');
+}
+
+function ttGridHtml(v) {
+  const periods = v.periods || [];
+  // 全部单元格显式定位：课程块也是显式 span，若空单元格靠自动排布会被课程块挤到错误列。
+  let html = '<div class="tt-corner" style="grid-column:1;grid-row:1">节次</div>';
+  v.days.forEach((d, di) => {
+    const isToday = v.today && Number(v.today.weekday) === d.day && Number(v.week) === Number(v.currentWeek);
+    html += `<div class="tt-dayhead${isToday ? ' today' : ''}" style="grid-column:${di + 2};grid-row:1"><b>${esc(d.name)}</b><span>${d.date ? esc(d.date.slice(5)) : '—'}</span></div>`;
+  });
+  periods.forEach((p, pi) => {
+    const row = pi + 2;
+    html += `<div class="tt-time" style="grid-column:1;grid-row:${row}"><b>${p.period}</b><span>${esc(p.start)}</span><span>${esc(p.end)}</span></div>`;
+    v.days.forEach((d, di) => { html += `<div class="tt-cell" style="grid-column:${di + 2};grid-row:${row}"></div>`; });
+  });
+  v.days.forEach((d, di) => {
+    d.courses.forEach((c) => {
+      const span = Number(c.endPeriod) - Number(c.startPeriod) + 1;
+      const hue = ttHashHue(c.name);
+      const meta = [c.location, `${c.startPeriod}-${c.endPeriod} 节`].filter(Boolean).join(' · ');
+      html += `<div class="tt-course${c.conflict ? ' conflict' : ''}" data-id="${esc(c.id)}" style="grid-column:${di + 2};grid-row:${Number(c.startPeriod) + 1} / span ${span};--h:${hue}"
+        title="${esc([c.name, c.teacher, c.location, `第 ${c.startPeriod}-${c.endPeriod} 节`, `周次 ${c.weeks}`].filter(Boolean).join(' · '))}">
+        <button class="tt-del" data-id="${esc(c.id)}" title="删除这门课">×</button>
+        <div class="tt-c-name">${esc(c.name)}</div>
+        <div class="tt-c-meta">${esc(meta)}</div>
+        <div class="tt-c-weeks">${esc(c.weeks)} 周</div>
+      </div>`;
+    });
+  });
+  return html;
+}
+
+function ttTodayHtml(t, totalCourses) {
+  if (!t) return '<div class="muted">暂无</div>';
+  const out = [];
+  if (!totalCourses) {
+    return '<div class="muted">课表为空：先设置学期并添加课程，或载入示例课表。</div>';
+  }
+  if (t.current) {
+    out.push(`<div class="tt-now-card live">
+      <div class="tt-now-top"><span class="badge ok">正在上课</span><span class="muted small">剩余 ${esc(ttFmtMin(t.current.remainingMin))}</span></div>
+      <div class="tt-now-name">${esc(t.current.name)}</div>
+      <div class="tt-now-meta">${esc([t.current.location, `第 ${t.current.startPeriod}-${t.current.endPeriod} 节`, `${t.current.startAt}-${t.current.endAt}`].filter(Boolean).join(' · '))}</div>
+    </div>`);
+  }
+  if (t.next) {
+    const n = t.next;
+    const when = n.dayOffset === 0 || n.dayOffset === undefined ? `今天 ${n.startAt}` : `${n.dayName || ''} ${n.startAt}`;
+    const inText = n.startsInMin != null ? ` · ${ttFmtMin(n.startsInMin)}后` : '';
+    out.push(`<div class="tt-now-card">
+      <div class="tt-now-top"><span class="badge">${n.dayOffset > 0 ? '下节课' : '接下来'}</span><span class="muted small">${esc(when)}${esc(inText)}</span></div>
+      <div class="tt-now-name">${esc(n.name)}</div>
+      <div class="tt-now-meta">${esc([n.location, `第 ${n.startPeriod}-${n.endPeriod} 节`].filter(Boolean).join(' · '))}</div>
+    </div>`);
+  }
+  if (!t.current && !t.next) out.push('<div class="tt-empty-ok">今天没有课了，去摸鱼吧。</div>');
+  if (t.courses && t.courses.length) {
+    out.push(`<div class="tt-today-list">${t.courses.map((c) => `<div class="tt-today-row">
+      <span class="p">${c.startPeriod}-${c.endPeriod}</span>
+      <span class="n">${esc(c.name)}</span>
+      <span class="l muted small">${esc(c.location || '')}</span>
+    </div>`).join('')}</div>`);
+  }
+  return out.join('');
+}
+
+function ttFreeHtml(v) {
+  if (!v.stats || !v.stats.courses) return '<div class="muted">课表为空，暂无有意义的空闲窗口。</div>';
+  const slots = v.freeSlots || [];
+  if (!slots.length) return '<div class="muted">本周没有连续 ≥2 节的空闲（按当前节次表计算）。</div>';
+  return `<div class="tt-free-list">${slots.slice(0, 8).map((s) => `<div class="tt-free-row">
+      <span class="d">${esc(s.dayName)}</span>
+      <span class="p">第 ${s.startPeriod}-${s.endPeriod} 节</span>
+      <span class="t muted small">${esc(s.from)}-${esc(s.to)}</span>
+      <span class="badge">${s.periods} 节</span>
+    </div>`).join('')}</div>
+    <div class="muted small" style="margin-top:8px">仅按课表计算，不含通勤、作业与自习安排；${slots.length > 8 ? `共 ${slots.length} 段，仅显示前 8 段。` : ''}</div>`;
+}
+
+function paintTimetable() {
+  const v = TT.data;
+  const box = $('#timetable-view');
+  if (!v || !box) return;
+  const term = v.term;
+  const weekNo = v.week;
+  const isOtherWeek = v.currentWeek != null && Number(weekNo) !== Number(v.currentWeek);
+  const weekBadge = !term
+    ? '未设置学期'
+    : `第 ${weekNo} 周${isOtherWeek && v.currentWeek >= 1 ? `（本周第 ${v.currentWeek} 周）` : ''}`;
+  const termLine = term
+    ? `${esc(term.name || '本学期')} · ${esc(term.startDate)} 开学 · 共 ${term.totalWeeks} 周 · ${v.periods.length} 节/天`
+    : '未设置学期 · 先设置开学日期，或载入示例';
+  const weeksDefault = term ? `1-${term.totalWeeks}` : '1-16';
+  const dayOptions = v.days.map((d) => `<option value="${d.day}">${esc(d.name)}</option>`).join('');
+  const periodOptions = v.periods.map((p) => `<option value="${p.period}">第 ${p.period} 节 · ${esc(p.start)}</option>`).join('');
+
+  box.innerHTML = `
+    <header class="tt-head">
+      <div class="wb-titles">
+        <div class="wb-name">课程表 <span class="badge">${esc(weekBadge)}</span>
+          <span class="badge">${v.stats.weeklyPeriods} 节 / 本周</span>
+          ${!v.stats.courses ? '<span class="badge">空课表</span>'
+            : v.conflicts.length ? `<span class="badge err">${v.conflicts.length} 处冲突</span>`
+              : '<span class="badge ok">无冲突</span>'}
+        </div>
+        <div class="wb-sub">${termLine}</div>
+      </div>
+      <div class="tt-actions">
+        <button class="btn ghost tt-nav" id="tt-prev" title="上一周" ${weekNo <= 1 ? 'disabled' : ''}>‹</button>
+        <button class="btn ghost" id="tt-now">本周</button>
+        <button class="btn ghost tt-nav" id="tt-next" title="下一周" ${weekNo >= TT_WEEK_MAX ? 'disabled' : ''}>›</button>
+      </div>
+    </header>
+    <div class="tt-scroll">
+      <div id="tt-banner">${ttBannerHtml(v)}</div>
+      <section class="wb-card tt-card">
+        <div class="tt-grid-wrap">
+          <div class="tt-grid" style="grid-template-rows:30px repeat(${v.periods.length}, 56px)">${ttGridHtml(v)}</div>
+        </div>
+        <div class="tt-grid-hint muted small">课时块显示课程名与地点；点右上角 × 删除（需点两次确认）。第 ${weekNo} 周 · 单双周已按周次表达式过滤。</div>
+      </section>
+      <div class="wb-grid">
+        <section class="wb-card">
+          <h3>现在 / 下一节</h3>
+          ${ttTodayHtml(v.today, v.stats.courses)}
+          <div class="tt-remind-row">
+            <button class="btn ghost" id="tt-remind">开启上课提醒</button>
+            <span class="muted small" id="tt-remind-hint">上课前 10 分钟与 1 分钟各提醒一次；仅本地判断，不上传。</span>
+          </div>
+        </section>
+        <section class="wb-card">
+          <h3>摸鱼窗口 <span class="badge">连续 ≥2 节</span></h3>
+          ${ttFreeHtml(v)}
+        </section>
+      </div>
+
+      <section class="wb-card">
+        <h3>添加课程</h3>
+        <div class="tt-form">
+          <label class="tt-field tt-span2">课程名称<input id="tt-name" class="plan-input" type="text" maxlength="60" placeholder="如：高等数学" /></label>
+          <label class="tt-field">教师<input id="tt-teacher" class="plan-input" type="text" maxlength="40" placeholder="可选" /></label>
+          <label class="tt-field">地点<input id="tt-loc" class="plan-input" type="text" maxlength="40" placeholder="如：教三-201" /></label>
+          <label class="tt-field">星期<select id="tt-day" class="plan-input">${dayOptions}</select></label>
+          <label class="tt-field">开始节次<select id="tt-start" class="plan-input">${periodOptions}</select></label>
+          <label class="tt-field">结束节次<select id="tt-end" class="plan-input">${periodOptions}</select></label>
+          <label class="tt-field">周次<input id="tt-weeks" class="plan-input" type="text" value="${esc(weeksDefault)}" placeholder="1-16 / 1-16单 / 2-16双" /></label>
+          <div class="tt-form-actions tt-span2">
+            <button class="btn" id="tt-add">添加</button>
+            <button class="btn ghost" id="tt-cancel-edit" hidden>取消编辑</button>
+            <label class="auto-approve"><input type="checkbox" id="tt-force" /> 冲突也强制保存（会标记）</label>
+          </div>
+        </div>
+        <div id="tt-add-result" class="plan-result"></div>
+      </section>
+
+      <section class="wb-card">
+        <h3>学期设置 <span class="badge">${term ? '已配置' : '待配置'}</span></h3>
+        <div class="tt-form">
+          <label class="tt-field tt-span2">学期名称<input id="tt-term-name" class="plan-input" type="text" maxlength="40" value="${esc(term ? term.name : '')}" placeholder="如：2026 秋季学期" /></label>
+          <label class="tt-field">开学日期（第 1 周周一）<input id="tt-term-start" class="plan-input" type="date" value="${esc(term ? term.startDate : '')}" /></label>
+          <label class="tt-field">总周数<input id="tt-term-weeks" class="plan-input" type="number" min="1" max="${TT_WEEK_MAX}" value="${term ? term.totalWeeks : 20}" /></label>
+          <div class="tt-form-actions tt-span2">
+            <button class="btn" id="tt-term-save">保存学期</button>
+            <button class="btn ghost" id="tt-term-monday">以本周周一为第 1 周</button>
+          </div>
+        </div>
+        <div id="tt-term-result" class="plan-result"></div>
+      </section>
+
+      <section class="wb-card">
+        <h3>批量导入 · 自检 · 数据</h3>
+        <div class="note">导入只接受本地 JSON（不登录教务系统、不爬取）。字段：<code>{"term":{...},"courses":[...]}</code>；单双周写在 <code>weeks</code> 里，如 <code>1-16单</code>。</div>
+        <textarea id="tt-import-json" class="tt-textarea" rows="7" spellcheck="false" placeholder='{"term":{"name":"2026 秋","startDate":"2026-09-07","totalWeeks":20},"courses":[{"name":"高等数学","teacher":"张老师","location":"教三-201","day":1,"startPeriod":1,"endPeriod":2,"weeks":"1-16"}]}'></textarea>
+        <div class="tt-form-actions">
+          <button class="btn ghost" id="tt-import-fill">填入当前课表</button>
+          <button class="btn ghost" id="tt-import-preview">预览校验</button>
+          <button class="btn" id="tt-import-replace">覆盖导入</button>
+          <button class="btn ghost" id="tt-import-merge">合并导入</button>
+          <button class="btn ghost" id="tt-eval">独立自检</button>
+        </div>
+        <div id="tt-import-result" class="plan-result"></div>
+        <div class="tt-divider"></div>
+        <div class="tt-subhead">从日历导入 <span class="badge">.ics · 不登录教务系统</span></div>
+        <div class="muted small" style="margin-bottom:8px">在教务系统或手机日历里导出 .ics 后选择文件（或粘贴内容）。按当前作息表把时间换算成节次与周次，只读文件、不需要账号密码。</div>
+        <div class="tt-form-actions" style="margin-top:0">
+          <input type="file" id="tt-ics-file" class="tt-file" accept=".ics,text/calendar" aria-label="选择 ICS 日历文件" />
+          <button class="btn ghost" id="tt-ics-preview">解析预览</button>
+          <button class="btn" id="tt-ics-import">合并导入</button>
+          <button class="btn ghost" id="tt-ics-export">导出 .ics（含上课提醒）</button>
+        </div>
+        <textarea id="tt-ics-text" class="tt-textarea" rows="5" spellcheck="false" placeholder="BEGIN:VCALENDAR&#10;VERSION:2.0&#10;...（也可以先选择 .ics 文件，自动填入）"></textarea>
+        <div id="tt-ics-result" class="plan-result"></div>
+        <div class="tt-form-actions" style="margin-top:14px">
+          <button class="btn ghost" id="tt-demo">载入示例课表</button>
+          <button class="btn ghost" id="tt-clear">清空全部课程</button>
+        </div>
+        <div id="tt-data-result" class="plan-result"></div>
+      </section>
+    </div>`;
+
+  bindTimetable(v);
+  refreshTodayLine();
+}
+
+function ttSetResult(id, html) { const box = $(id); if (box) box.innerHTML = html; }
+
+function bindTimetable(v) {
+  const week = v.week;
+  const weeksDefault = v.term ? `1-${v.term.totalWeeks}` : '1-16';
+  $('#tt-prev').onclick = () => renderTimetable({ week: Math.max(1, week - 1) });
+  $('#tt-next').onclick = () => renderTimetable({ week: Math.min(TT_WEEK_MAX, week + 1) });
+  $('#tt-now').onclick = () => { state.ttWeek = null; renderTimetable(); };
+
+  // 上课提醒开关：Notification 授权必须由用户手势触发
+  const remindBtn = $('#tt-remind');
+  const updateRemindUi = () => {
+    if (!remindBtn) return;
+    const supported = 'Notification' in window;
+    const granted = supported && Notification.permission === 'granted';
+    const enabled = granted && localStorage.getItem(TT_REMIND_KEY) === '1';
+    remindBtn.textContent = !supported ? '浏览器不支持通知'
+      : Notification.permission === 'denied' ? '通知已被拒绝'
+        : enabled ? '提醒已开启（点击关闭）' : '开启上课提醒';
+    remindBtn.classList.toggle('on', enabled);
+    const hint = $('#tt-remind-hint');
+    if (hint) {
+      hint.textContent = !supported ? '当前浏览器不支持系统通知，可导出 .ics 到手机日历提醒。'
+        : Notification.permission === 'denied' ? '通知被站点拒绝：在地址栏权限设置里改为「允许」后重试。'
+          : enabled ? '已开启：上课前 10 分钟与 1 分钟各提醒一次（需保持页面打开）。'
+            : '开启后会在上课前 10 分钟、1 分钟各提醒一次；仅本地判断，不上传。';
+    }
+  };
+  if (remindBtn) {
+    remindBtn.onclick = async () => {
+      if (!('Notification' in window)) return updateRemindUi();
+      if (localStorage.getItem(TT_REMIND_KEY) === '1') {
+        localStorage.setItem(TT_REMIND_KEY, '0');
+        return updateRemindUi();
+      }
+      let perm = Notification.permission;
+      if (perm !== 'granted') perm = await Notification.requestPermission();
+      if (perm === 'granted') {
+        localStorage.setItem(TT_REMIND_KEY, '1');
+        ttStartReminderTicker();
+        ttTickReminders();
+      }
+      updateRemindUi();
+    };
+  }
+  updateRemindUi();
+
+  const resetTtForm = () => {
+    state.ttEditing = null;
+    $('#tt-name').value = ''; $('#tt-teacher').value = ''; $('#tt-loc').value = '';
+    $('#tt-weeks').value = weeksDefault;
+    $('#tt-force').checked = false;
+    $('#tt-add').textContent = '添加';
+    $('#tt-cancel-edit').hidden = true;
+  };
+  $('#tt-cancel-edit').onclick = () => { resetTtForm(); ttSetResult('#tt-add-result', '<div class="muted small">已取消编辑。</div>'); };
+
+  // 点击课程块 → 填入表单进入编辑（删除按钮除外）
+  $$('.tt-course').forEach((block) => {
+    block.onclick = (e) => {
+      if (e.target.closest('.tt-del')) return;
+      const c = (v.courses || []).find((x) => x.id === block.dataset.id);
+      if (!c) return;
+      state.ttEditing = c.id;
+      $('#tt-name').value = c.name;
+      $('#tt-teacher').value = c.teacher || '';
+      $('#tt-loc').value = c.location || '';
+      $('#tt-day').value = String(c.day);
+      $('#tt-start').value = String(c.startPeriod);
+      $('#tt-end').value = String(c.endPeriod);
+      $('#tt-weeks').value = c.weeks;
+      $('#tt-force').checked = false;
+      $('#tt-add').textContent = '保存修改';
+      $('#tt-cancel-edit').hidden = false;
+      ttSetResult('#tt-add-result', `<div class="muted small">正在编辑「${esc(c.name)}」，改完点「保存修改」。</div>`);
+      const form = $('.tt-form');
+      if (form) form.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    };
+  });
+
+  // 删除课程：两段式确认（预览面板常禁用原生 confirm）
+  $$('.tt-del').forEach((btn) => {
+    btn.onclick = async (e) => {
+      e.stopPropagation();
+      if (btn.dataset.confirm !== '1') {
+        btn.dataset.confirm = '1'; btn.textContent = '?'; btn.classList.add('confirming');
+        setTimeout(() => { if (btn.dataset.confirm === '1') { btn.dataset.confirm = ''; btn.textContent = '×'; btn.classList.remove('confirming'); } }, 2500);
+        return;
+      }
+      try {
+        await api('/api/timetable/courses/' + encodeURIComponent(btn.dataset.id), { method: 'DELETE' });
+        renderTimetable({ week });
+      } catch (err) { ttSetResult('#tt-add-result', `<div class="warnbox">${esc(err.message)}</div>`); }
+    };
+  });
+
+  $('#tt-add').onclick = async () => {
+    const body = {
+      name: $('#tt-name').value.trim(),
+      teacher: $('#tt-teacher').value.trim(),
+      location: $('#tt-loc').value.trim(),
+      day: Number($('#tt-day').value),
+      startPeriod: Number($('#tt-start').value),
+      endPeriod: Number($('#tt-end').value),
+      weeks: $('#tt-weeks').value.trim(),
+      force: $('#tt-force').checked,
+    };
+    const editing = state.ttEditing;
+    try {
+      const r = editing
+        ? await api('/api/timetable/courses/' + encodeURIComponent(editing), {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+        })
+        : await post('/api/timetable/courses', body);
+      state.ttEditing = null;
+      await renderTimetable({ week });
+      ttSetResult('#tt-add-result', `<div class="muted small">${editing ? '已更新' : '已添加'}「${esc(r.course.name)}」。${r.course.conflict ? '（已强制保存，存在冲突，建议调整）' : ''}</div>`);
+    } catch (err) {
+      const conflicts = err.payload && err.payload.conflicts;
+      const detail = conflicts && conflicts.length
+        ? '<div class="tt-conflict-list">' + conflicts.map((c) => `<div>· ${esc(c.name)}：${TT_WEEKDAYS[c.day - 1]} 第 ${c.startPeriod}-${c.endPeriod} 节（共享 ${c.sharedWeeks.length} 周）</div>`).join('') + '</div>'
+        : '';
+      ttSetResult('#tt-add-result', `<div class="warnbox">${esc(err.message)}${detail}</div>`);
+    }
+  };
+
+  $('#tt-term-save').onclick = async () => {
+    const body = {
+      name: $('#tt-term-name').value.trim(),
+      startDate: $('#tt-term-start').value,
+      totalWeeks: Number($('#tt-term-weeks').value),
+    };
+    try {
+      const r = await post('/api/timetable/term', body);
+      state.ttWeek = null;
+      await renderTimetable();
+      const warn = (r.warnings || []).map((w) => `<div class="warnbox">${esc(w)}</div>`).join('');
+      ttSetResult('#tt-term-result', `<div class="muted small">学期已保存。</div>${warn}`);
+    } catch (err) { ttSetResult('#tt-term-result', `<div class="warnbox">${esc(err.message)}</div>`); }
+  };
+  $('#tt-term-monday').onclick = () => {
+    $('#tt-term-start').value = ttIso(ttMonday());
+    ttSetResult('#tt-term-result', '<div class="muted small">已填入本周周一；确认后点「保存学期」。</div>');
+  };
+
+  const readImport = () => {
+    try { return JSON.parse($('#tt-import-json').value || '{}'); }
+    catch (err) { ttSetResult('#tt-import-result', `<div class="warnbox">JSON 解析失败：${esc(err.message)}</div>`); return null; }
+  };
+  $('#tt-import-fill').onclick = () => {
+    $('#tt-import-json').value = JSON.stringify({ term: v.term, courses: v.courses }, null, 2);
+    ttSetResult('#tt-import-result', '<div class="muted small">已填入当前课表，可编辑后覆盖导入。</div>');
+  };
+  const showImport = (r) => {
+    const errs = (r.errors || []).map((x) => `<div>· ${esc(x)}</div>`).join('');
+    if (r.errors && r.errors.length) {
+      ttSetResult('#tt-import-result', `<div class="warnbox">校验未通过：${errs}</div>`);
+      return;
+    }
+    const rows = (r.preview || []).slice(0, 200).map((p) => `<div class="trace-row"><span class="n">#${p.index}</span><span>${esc(p.name)}</span><span class="muted small">${TT_WEEKDAYS[p.day - 1]} ${p.startPeriod}-${p.endPeriod} 节 · ${esc(p.weeks)} 周</span></div>`).join('');
+    ttSetResult('#tt-import-result', `<div class="note">${r.dryRun ? '预览通过' : `已导入 ${r.imported} 门`}，当前共 ${r.total} 门。</div>${rows}`);
+  };
+  $('#tt-import-preview').onclick = async () => {
+    const body = readImport(); if (!body) return;
+    body.dryRun = true;
+    try { showImport(await post('/api/timetable/import', body)); }
+    catch (err) { ttSetResult('#tt-import-result', `<div class="warnbox">${esc(err.message)}</div>`); }
+  };
+  const doImport = async (mode) => {
+    const body = readImport(); if (!body) return;
+    body.mode = mode;
+    try {
+      const r = await post('/api/timetable/import', body);
+      state.ttWeek = null;
+      await renderTimetable();
+      showImport(r);
+    } catch (err) { ttSetResult('#tt-import-result', `<div class="warnbox">${esc(err.message)}</div>`); }
+  };
+  $('#tt-import-merge').onclick = () => doImport('merge');
+  const replaceBtn = $('#tt-import-replace');
+  replaceBtn.onclick = () => {
+    if (v.courses.length && replaceBtn.dataset.confirm !== '1') {
+      replaceBtn.dataset.confirm = '1'; replaceBtn.textContent = '确认覆盖？';
+      setTimeout(() => { if (replaceBtn.dataset.confirm === '1') { replaceBtn.dataset.confirm = ''; replaceBtn.textContent = '覆盖导入'; } }, 3000);
+      return;
+    }
+    replaceBtn.dataset.confirm = ''; replaceBtn.textContent = '覆盖导入';
+    doImport('replace');
+  };
+
+  // ---------- ICS 日历导入 / 导出 ----------
+  const showIcs = (r) => {
+    const errs = (r.errors || []).map((x) => `<div>· ${esc(x)}</div>`).join('');
+    if (r.errors && r.errors.length) {
+      ttSetResult('#tt-ics-result', `<div class="warnbox">未通过：${errs}</div>`);
+      return;
+    }
+    const rows = (r.preview || []).slice(0, 200).map((p) => `<div class="trace-row"><span class="n">#${p.index}</span><span>${esc(p.name)}</span><span class="muted small">${TT_WEEKDAYS[p.day - 1]} ${p.startPeriod}-${p.endPeriod} 节 · ${esc(p.weeks)} 周 · ${esc(p.location || '未填地点')}</span></div>`).join('');
+    const warns = (r.warnings || []).slice(0, 6).map((w) => `<div class="muted small">· ${esc(w)}</div>`).join('');
+    ttSetResult('#tt-ics-result', `<div class="note">解析到 ${r.parsedEvents} 个日程，${r.dryRun ? `可生成 ${r.preview.length} 门课程（预览，未写入）` : `已导入 ${r.imported} 门，当前共 ${r.total} 门`}。</div>${rows}${warns}`);
+  };
+  const previewIcs = async () => {
+    const text = $('#tt-ics-text').value.trim();
+    if (!text) { ttSetResult('#tt-ics-result', '<div class="warnbox">请选择 .ics 文件或粘贴内容</div>'); return; }
+    try { showIcs(await post('/api/timetable/import/ics', { ics: text, dryRun: true, mode: 'merge' })); }
+    catch (err) { ttSetResult('#tt-ics-result', `<div class="warnbox">${esc(err.message)}</div>`); }
+  };
+  $('#tt-ics-preview').onclick = previewIcs;
+  $('#tt-ics-file').onchange = async (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    try {
+      const text = await f.text();
+      $('#tt-ics-text').value = text;
+      ttSetResult('#tt-ics-result', `<div class="muted small">已读取 ${esc(f.name)}（${text.length} 字符），解析中…</div>`);
+      await previewIcs();
+    } catch (err) { ttSetResult('#tt-ics-result', `<div class="warnbox">读取文件失败：${esc(err.message)}</div>`); }
+  };
+  $('#tt-ics-import').onclick = async () => {
+    const text = $('#tt-ics-text').value.trim();
+    if (!text) { ttSetResult('#tt-ics-result', '<div class="warnbox">请选择 .ics 文件或粘贴内容</div>'); return; }
+    try {
+      const r = await post('/api/timetable/import/ics', { ics: text, mode: 'merge' });
+      state.ttWeek = null;
+      await renderTimetable();
+      showIcs(r);
+    } catch (err) { ttSetResult('#tt-ics-result', `<div class="warnbox">${esc(err.message)}</div>`); }
+  };
+  $('#tt-ics-export').onclick = async () => {
+    try {
+      const r = await fetch('/api/timetable/export.ics', { headers: SESSION_TOKEN ? { 'X-Moyu-Token': SESSION_TOKEN } : {} });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error(j.error || 'HTTP ' + r.status);
+      }
+      const blob = await r.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'moyu-timetable.ics';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1500);
+      ttSetResult('#tt-ics-result', '<div class="muted small">已导出 .ics：可导入手机/电脑日历，含上课前 10 分钟提醒。</div>');
+    } catch (err) { ttSetResult('#tt-ics-result', `<div class="warnbox">导出失败：${esc(err.message)}</div>`); }
+  };
+
+  $('#tt-eval').onclick = async () => {
+    try {
+      const r = await post('/api/timetable/eval', {});
+      const cls = r.verdict === 'PASS' ? 'ok' : r.verdict === 'FAIL' ? 'err' : 'warn';
+      const fails = (r.failures || []).map((f) => `<div class="warnbox">${esc(f)}</div>`).join('');
+      ttSetResult('#tt-import-result', `<div class="note"><span class="badge ${cls}">自检 ${esc(r.verdict)}</span> 课程 ${r.stats ? r.stats.courses : '—'} 门 · 冲突 ${r.stats ? r.stats.conflicts : '—'} 处</div>${fails}`);
+    } catch (err) { ttSetResult('#tt-import-result', `<div class="warnbox">${esc(err.message)}</div>`); }
+  };
+
+  const demoBtn = $('#tt-demo');
+  demoBtn.onclick = async () => {
+    if (v.courses.length && demoBtn.dataset.confirm !== '1') {
+      demoBtn.dataset.confirm = '1'; demoBtn.textContent = '确认替换为示例？';
+      setTimeout(() => { if (demoBtn.dataset.confirm === '1') { demoBtn.dataset.confirm = ''; demoBtn.textContent = '载入示例课表'; } }, 3000);
+      return;
+    }
+    demoBtn.dataset.confirm = ''; demoBtn.textContent = '载入示例课表';
+    try {
+      await post('/api/timetable/demo', { replace: true });
+      state.ttWeek = null;
+      renderTimetable();
+    } catch (err) { ttSetResult('#tt-data-result', `<div class="warnbox">${esc(err.message)}</div>`); }
+  };
+
+  const clearBtn = $('#tt-clear');
+  clearBtn.onclick = async () => {
+    if (!v.courses.length) { ttSetResult('#tt-data-result', '<div class="muted small">课表已经是空的。</div>'); return; }
+    if (clearBtn.dataset.confirm !== '1') {
+      clearBtn.dataset.confirm = '1'; clearBtn.textContent = '确认清空？';
+      setTimeout(() => { if (clearBtn.dataset.confirm === '1') { clearBtn.dataset.confirm = ''; clearBtn.textContent = '清空全部课程'; } }, 3000);
+      return;
+    }
+    clearBtn.dataset.confirm = ''; clearBtn.textContent = '清空全部课程';
+    try {
+      const r = await api('/api/timetable/courses', { method: 'DELETE' });
+      state.ttWeek = null;
+      await renderTimetable();
+      ttSetResult('#tt-data-result', `<div class="muted small">已清空 ${r.cleared} 门课程。</div>`);
+    } catch (err) { ttSetResult('#tt-data-result', `<div class="warnbox">${esc(err.message)}</div>`); }
+  };
+}
+
 // ---------- 会话列表 ----------
 async function loadRuns() {
   state.runs = await get('/api/agent/runs');
@@ -724,9 +1341,16 @@ async function boot() {
     $('#messages').innerHTML = `<div class="warnbox">无法连接后端：${esc(e.message)}<br>请先运行 node server.js（127.0.0.1:3080）</div>`;
   }
 
-  // 默认进入「回复建议」（普通 mock 对话）；其余三个版块为平级工作台。
+  // 默认进入「回复建议」（普通 mock 对话）；其余为平级工作台。
   const initial = sectionFromHash() || 'jev_reply';
   state.activeSection = initial;
   switchSection(initial);
+
+  // 今日摘要 + 上课提醒（全局常驻，切到其它版块也能按时提醒）
+  refreshTodayLine();
+  ttStartReminderTicker();
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) { refreshTodayLine(); ttTickReminders(); }
+  });
 }
 boot();

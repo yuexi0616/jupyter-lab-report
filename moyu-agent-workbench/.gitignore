@@ -4,8 +4,18 @@
 !data/profile.json
 !public/index.html
 
+# 个人数据：课表含真实作息、教室与教师，默认不提交
+data/timetable.json
+data/timetable.json.*.tmp
+
 # 运行轨迹 / 临时状态 / 调试产物不入库
 runs/
 .tmp-runs-*/
+test/.tmp-*
 *.png
 *.log
+
+# 依赖与缓存（项目本身零依赖，仅 Python 工具可能生成）
+node_modules/
+__pycache__/
+*.pyc

@@ -30,6 +30,8 @@ const homework = require('./lib/homework');
 const homeworkEval = require('./lib/eval/homework.eval');
 const project = require('./lib/project');
 const projectEval = require('./lib/eval/project.eval');
+const timetable = require('./lib/timetable');
+const timetableEval = require('./lib/eval/timetable.eval');
 
 // 进程级兜底：本地工具应"出错但不崩"，避免单个漏网 async 拒绝导致整个服务退出。
 // 注意：这只是防护网，正常路径仍须在各路由内 try/catch（见 /api/course/create 的教训）。
@@ -167,6 +169,30 @@ function buildPlan(sectionId, taskText) {
     approvalGates: steps.filter((x) => x.gate).map((x) => x.id),
     disclaimer: '这是方案工作台的模拟计划：不会执行真实刷课/回复/建模，也不接触真实凭据。',
   };
+}
+
+// ---------- 课程表（P4，纯本地） ----------
+/** 允许用 ?at=ISO 注入时钟（测试/演示用），非法值回退当前时间 */
+function atParam(raw) {
+  if (!raw) return new Date();
+  const d = new Date(raw);
+  return Number.isNaN(d.getTime()) ? new Date() : d;
+}
+/** 统一的课程表错误映射：冲突 409、未找到 404、超限 413、文件损坏 500 */
+function sendTimetableError(res, e) {
+  const code = e && e.code;
+  const status = code === 'TIMETABLE_CONFLICT' ? 409
+    : code === 'TIMETABLE_NOT_FOUND' ? 404
+      : code === 'TIMETABLE_LIMIT' ? 413
+        : code === 'TIMETABLE_CORRUPT' ? 500
+          : 400;
+  return send(res, status, { error: e.message, code, conflicts: e.conflicts || undefined, details: e.details || undefined });
+}
+/** 一次性读取 + 视图 + 今日，供前端单次渲染 */
+function timetableSnapshot({ week, now }) {
+  const data = timetable.read();
+  const view = timetable.view(data, { week, now });
+  return { ...view, courses: data.courses, today: timetable.today(data, { now }) };
 }
 
 function health() {
@@ -354,6 +380,93 @@ function handleApi(req, res, url) {
     const sid = decodeURIComponent(p.slice('/api/project/'.length).split('/')[0]);
     return send(res, 200, { deleted: project.deleteSession(sid) });
   }
+  // ---------- 课程表（P4，纯本地）----------
+  if (p === '/api/timetable/meta' && method === 'GET') return send(res, 200, timetable.describe());
+  if (p === '/api/timetable' && method === 'GET') {
+    try {
+      const week = url.searchParams.get('week');
+      return send(res, 200, timetableSnapshot({
+        week: week ? Number(week) : undefined,
+        now: atParam(url.searchParams.get('at')),
+      }));
+    } catch (e) { return sendTimetableError(res, e); }
+  }
+  if (p === '/api/timetable/today' && method === 'GET') {
+    try { return send(res, 200, timetable.today(timetable.read(), { now: atParam(url.searchParams.get('at')) })); }
+    catch (e) { return sendTimetableError(res, e); }
+  }
+  if (p === '/api/timetable/digest' && method === 'GET') {
+    try { return send(res, 200, timetable.digest(atParam(url.searchParams.get('at')))); }
+    catch (e) { return sendTimetableError(res, e); }
+  }
+  if (p === '/api/timetable/term' && method === 'POST') {
+    return readJsonBody(req, (err, body) => {
+      if (err) return send(res, 400, { error: 'invalid json' });
+      try { return send(res, 200, timetable.setTerm(body)); } catch (e) { return sendTimetableError(res, e); }
+    });
+  }
+  if (p === '/api/timetable/courses' && method === 'POST') {
+    return readJsonBody(req, (err, body) => {
+      if (err) return send(res, 400, { error: 'invalid json' });
+      try { return send(res, 200, timetable.addCourse(body, { force: body.force === true })); }
+      catch (e) { return sendTimetableError(res, e); }
+    });
+  }
+  if (p === '/api/timetable/courses' && method === 'DELETE') {
+    try { return send(res, 200, timetable.clearCourses()); } catch (e) { return sendTimetableError(res, e); }
+  }
+  if (p.startsWith('/api/timetable/courses/') && method === 'PUT') {
+    const id = decodeURIComponent(p.slice('/api/timetable/courses/'.length).split('/')[0]);
+    return readJsonBody(req, (err, body) => {
+      if (err) return send(res, 400, { error: 'invalid json' });
+      try { return send(res, 200, timetable.updateCourse(id, body, { force: body.force === true })); }
+      catch (e) { return sendTimetableError(res, e); }
+    });
+  }
+  if (p.startsWith('/api/timetable/courses/') && method === 'DELETE') {
+    const id = decodeURIComponent(p.slice('/api/timetable/courses/'.length).split('/')[0]);
+    try { return send(res, 200, timetable.removeCourse(id)); } catch (e) { return sendTimetableError(res, e); }
+  }
+  if (p === '/api/timetable/import' && method === 'POST') {
+    return readJsonBody(req, (err, body) => {
+      if (err) return send(res, 400, { error: 'invalid json' });
+      try {
+        return send(res, 200, timetable.importData(body, {
+          mode: body.mode === 'merge' ? 'merge' : 'replace',
+          dryRun: body.dryRun === true,
+        }));
+      } catch (e) { return sendTimetableError(res, e); }
+    });
+  }
+  if (p === '/api/timetable/demo' && method === 'POST') {
+    return readJsonBody(req, (err, body) => {
+      if (err) return send(res, 400, { error: 'invalid json' });
+      try { return send(res, 200, timetable.loadDemo({ replace: body.replace !== false })); }
+      catch (e) { return sendTimetableError(res, e); }
+    });
+  }
+  if (p === '/api/timetable/import/ics' && method === 'POST') {
+    return readJsonBody(req, (err, body) => {
+      if (err) return send(res, 400, { error: 'invalid json' });
+      try {
+        return send(res, 200, timetable.importIcs(String(body.ics || ''), {
+          dryRun: body.dryRun === true,
+          mode: body.mode === 'replace' ? 'replace' : 'merge',
+        }));
+      } catch (e) { return sendTimetableError(res, e); }
+    });
+  }
+  if (p === '/api/timetable/export.ics' && method === 'GET') {
+    try {
+      const r = timetable.exportIcs();
+      return send(res, 200, r.ics, 'text/calendar; charset=utf-8');
+    } catch (e) { return sendTimetableError(res, e); }
+  }
+  if (p === '/api/timetable/eval' && method === 'POST') {
+    try { return send(res, 200, timetableEval.evaluate(timetable.read())); }
+    catch (e) { return sendTimetableError(res, e); }
+  }
+
   if (p === '/api/agent/approval' && method === 'POST') {
     // 签发一次性审批凭证。steps 白名单：只接受合法的 gate 步骤 id（1..50 的整数）
     return readJsonBody(req, (err, body) => {

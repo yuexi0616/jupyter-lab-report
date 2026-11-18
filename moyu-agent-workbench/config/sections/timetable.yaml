@@ -1,0 +1,44 @@
+# 课程表版块声明式契约（P4）
+# 纯本地课表：不登录教务系统、不爬取、不代抢课。
+# 作用：把"什么时候上课 / 什么时候连续空闲"变成可查询事实，供刷课、作业等版块排期。
+id: timetable
+name: 课程表
+kernel: local-timetable
+storage:
+  file: data/timetable.json      # 可用 MOYU_TIMETABLE_FILE 覆盖
+  personal: true                 # 个人数据，不应提交到公开仓库
+time:
+  weekdays: 7                    # 周一..周日
+  max_weeks: 30
+  periods: 12                    # 默认作息，可在学期设置中整体覆盖
+week_expr:
+  syntax: "1-16 / 1-16单 / 2-16双 / 1,3,5-9"
+  rule: 解析失败明确报错，不猜测
+conflict:
+  key: [day, period_overlap, week_intersection]
+  policy: reject_by_default     # 默认拒绝；force=true 可强制并标记 conflict
+queries:
+  - id: view
+    desc: 指定周次的 7 天课表 + 全表冲突 + 连续空闲时段
+  - id: today
+    desc: 当前课 / 下一节课 / 今日空闲窗口（可注入时钟，便于测试）
+  - id: eval
+    desc: 独立自检（结构 / 冲突 / 周次越界），三态 PASS/FAIL/INCONCLUSIVE
+steps:
+  - id: 1
+    action: term.set
+    desc: 设置学期（开学日期 = 第 1 周周一、总周数、可选作息）
+  - id: 2
+    action: course.add
+    desc: 添加课程（名称/星期/节次/周次），默认拒绝时间冲突
+  - id: 3
+    action: timetable.eval
+    desc: 独立自检，冲突与越界必须修复
+boundary:
+  login_school_system: false
+  scrape: false
+  grab_course: false
+  modify_school_data: false
+acceptance:
+  verdicts: [PASS, FAIL, INCONCLUSIVE]
+  note: 空课表或未设置学期判 INCONCLUSIVE，不把"没数据"当作"没问题"
